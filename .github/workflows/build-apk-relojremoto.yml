@@ -1,1 +1,57 @@
+name: build-apk
 
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Si subiste el proyecto como .zip en la raíz, lo descomprime encima del repositorio.
+      - name: Descomprimir zip del proyecto (si existe)
+        run: |
+          shopt -s nullglob
+          for z in *.zip; do
+            echo "Descomprimiendo $z"
+            unzip -o "$z" -x "$z"
+          done
+          ls -la
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.11.1
+
+      - name: Compilar APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Preparar APK (versión en el nombre)
+        id: apk
+        run: |
+          APK=$(ls app/build/outputs/apk/debug/RelojRemoto-v*-debug.apk | head -n1)
+          NAME=$(basename "$APK")
+          VER=$(echo "$NAME" | sed -E 's/RelojRemoto-v([0-9.]+)-debug.apk/\1/')
+          cp "$APK" "$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+
+      # El APK queda en "Releases" sin comprimir.
+      - name: Publicar APK en Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.apk.outputs.ver }}"
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" "${{ steps.apk.outputs.name }}" \
+            --title "Reloj Remoto $TAG" --notes "APK $TAG"
